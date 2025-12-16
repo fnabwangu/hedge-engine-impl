@@ -1,0 +1,48 @@
+prompts/signal_template.json
+{
+  "title": "llm_signal schema",
+  "type": "object",
+  "properties": {
+    "decision_id": {"type":"string"},
+    "timestamp_utc": {"type":"string"},
+    "prompt_hash": {"type":"string"},
+    "model_version": {"type":"string"},
+    "llm_signal": {
+      "type": "object",
+      "properties": {
+        "p_success": {"type":"number"},
+        "p_confidence": {"type":"number"},
+        "horizon_days": {"type":"integer"},
+        "expected_delta": {
+          "type":"object",
+          "properties": {
+            "fav": {"type":"number"},
+            "neutral": {"type":"number"},
+            "unfav": {"type":"number"}
+          },
+          "required":["fav","neutral","unfav"]
+        },
+        "trade_strength": {"type":"number"},
+        "suggested_instrument": {"type":"object"}
+      },
+      "required":["p_success","p_confidence","horizon_days","expected_delta","suggested_instrument"]
+    },
+    "evidence": {
+      "type":"array",
+      "items": {
+        "type":"object",
+        "properties":{
+          "source_id":{"type":"string"},
+          "type":{"type":"string"},
+          "filecite":{"type":"string"},
+          "excerpt":{"type":"string"}
+        },
+        "required":["source_id","type","filecite"]
+      }
+    },
+    "chart_spec": {"type":"object"},
+    "manuscript_snippet": {"type":"string"},
+    "flags": {"type":"object"}
+  },
+  "required":["decision_id","timestamp_utc","prompt_hash","model_version","llm_signal","flags"]
+}
