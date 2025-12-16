@@ -1,0 +1,630 @@
+# manual/source/01-intro.md
+
+# Hedge Engine — Implementation Manual (Intro)
+
+## Purpose
+This manual is the developer-facing implementation companion to the Hedge Engine e-book. It contains the runnable design notes, operational recipes, JSON schemas, and copy-paste code & CLI examples necessary to provision the sandbox, run the backtests, and operate the system under governance.
+
+## Audience
+- Engineers building the sandbox and production adapters  
+- Quant researchers implementing and verifying LETF strategies  
+- Compliance and ops staff validating governance, audit and kill-switch controls  
+- DevOps personnel responsible for CI, releases and secrets handling
+
+## Goals
+- Provide a reproducible repository layout and file manifest.  
+- Ship canonical schemas and deterministic code snippets that auditors can replay.  
+- Describe the research→writing contract: how LLM outputs are constrained and used.  
+- Define operator runbooks for sandbox → shadow → small live → scale transitions.  
+- Deliver checklists and CI hooks so every release is auditable.
+
+## How to use this manual
+- Follow chapter order for onboarding (Architecture → Data → Signal → Decision → Execution → Risk → Audit → Operators).  
+- Use the `scripts/` helpers to create sandbox data and to run end-to-end demos.  
+- Treat the `ADDENDUM.md` as the policy; the files under `manual/source/` are the source for the published PDF in `manual/pdfs/`.  
+- Every example command is copy/paste ready; replace placeholders (emails, tokens, paths) with your environment values.
+
+## Conventions used in this manual
+- JSON examples use compact canonical serialization where appropriate.  
+- `Decision Record` refers to the canonical trade decision audit JSON.  
+- `LLM` indicates the research agent; `Execution Agent` indicates the execution subsystem (sandbox or live).  
+- Paths are relative to repository root unless otherwise noted.
+
+## Quick start (one-minute)
+1. Create venv and install requirements:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+
+python data/generate_sandbox_data.py
+python scripts/run_sandbox.py full
+
+jq . data/decision_records/decision_demo.json
+
+
+
+```markdown
+# manual/source/02-architecture.md
+
+# Architecture Overview
+
+## High-level diagram
+
+[Data Layer] -> [Signal Layer (LLM Research Agent)] -> [Decision Engine] -> [Execution Agent]
+| | | |
+market feeds, events evidence[] & chart_spec EV Gate, Risk Engine sandbox/live broker
+(ETFs, LETF NAVs, PTRs) (structured JSON only) (decay sim, VaR, stops) (SOR, TWAP)
+
+
+## Components & responsibilities
+
+### Data Layer
+- Market data: daily OHLCV, LETF NAVs, options snapshots (parquet/csv).  
+- Event calendar: FOMC, earnings, court dates, PTRs.  
+- Provenance: every dataset must include `source` and `sha256` in `dataset_manifest.json`.
+
+### Signal Layer (Research Agent)
+- Runs `prompts/research_prompt.json`.  
+- MUST output only JSON conforming to `prompts/signal_template.json`.  
+- Produces: `llm_signal`, `evidence[]`, `chart_spec`, `manuscript_snippet`.
+
+### Decision Engine
+- Deterministic processing: `decay_sim`, `ev_calc`, `pretrade_checks`, `risk_engine`.  
+- Produces `decision_record` JSON and `execution_plan` if `viability_pass` true.  
+- Writes Decision Records to `data/decision_records/`.
+
+### Execution Agent
+- Sandbox: `src/execution_stub.py` simulates fills with seeded RNG.  
+- Live: broker adapters (IB/Alpaca) gated behind operator approval, 2FA, and vaults.
+
+### Audit & Operator Console
+- `src/audit.py` creates `audit_hash`, `signature`, and supports replay.  
+- Operator console: human review queue, kill-switch button, telemetry dashboards.
+
+## Data flow notes
+- Freeze `market_snapshot` per decision cycle and store it with the Decision Record.  
+- LLM research run is done with the frozen snapshot; deterministic engine reuses the same snapshot.  
+- Charts are produced by deterministic renderer using `chart_spec` and stored under `artifacts/charts/`.
+
+## Deployment topology (suggested)
+- Staging: full sandbox + telemetry → periodic kill-switch drills.  
+- Shadow: connect live feeds but route execution to sandbox; run 30–90 days for calibration.  
+- Small live: limited notional, human approvals required.  
+- Production: scaled live with institutional execution plumbing and monitoring.
+
+## Manifest mapping
+- Addendum lists the authoritative file → component mapping. Use it for audits and compliance reviews.
+
+
+# manual/source/03-data.md
+
+# Data: Formats, Sandbox Datasets & Provenance
+
+## Required sandbox datasets (under `data/`)
+- `sandbox_etf_prices.parquet` — columns: `date,ticker,open,high,low,close,adj_close,volume`  
+- `sandbox_letf_navs.parquet` — columns: `date,letf_ticker,nav`  
+- `event_calendar.csv` — columns: `date,event_type,name,metadata`  
+- `ptr_sample.csv` — optional: `date,member,ticker,side,amount_range`
+
+## Formats & rationale
+- Use **parquet** for performance and column types. Provide CSV equivalents for portability.  
+- Include `source` and `sha256` in `dataset_manifest.json` to allow auditors to verify data integrity.
+
+## dataset_manifest.json
+Example entry:
+```json
+{
+  "files":[
+    {"path":"data/sandbox_etf_prices.parquet","sha256":"<hex>","source":"generated/synthetic"},
+    {"path":"manual/pdfs/full-manual-optimized.pdf","sha256":"<hex>","source":"author"}
+  ]
+}
+Provenance & checksums
+
+Always compute SHA-256 for datasets and artifacts:
+
+sha256sum data/sandbox_etf_prices.parquet
+
+Store the manifest in the repo and update CI to validate checksums on PRs.
+
+Market data sources
+
+Sandbox: synthetic or free APIs (Alpha Vantage, IEX) for demo.
+
+Production: institutional feeds or broker-provided market data (ensure licensing).
+
+LETF NAVs
+
+LETF NAVs must match broker-provided NAVs for backtests. If unavailable, simulate using daily reset factors but document the method and limitations.
+
+Storage & retention
+
+Store Decision Records in data/decision_records/.
+
+Keep data/kill_switch_logs/, data/decision_records/, data/telemetry/ in durable storage (S3 or institutional object store) with retention per compliance.
+
+Utilities
+
+data/generate_sandbox_data.py creates small sample datasets for local development.
+
+
+
+```markdown
+# manual/source/04-signal-layer.md
+
+# Signal Layer — LLM Research Agent & Prompt Contract
+
+## Goal
+Produce structured, auditable signals that the deterministic Decision Engine can consume without human parsing. The LLM is a research assistant, **not** the source of truth.
+
+## Obligation: Structured JSON only
+LLM outputs MUST match `prompts/signal_template.json`. Any free text is limited to `manuscript_snippet` ≤ 300 words.
+
+## Required top-level fields
+- `decision_id` — uuid4  
+- `timestamp_utc` — ISO8601 UTC  
+- `prompt_hash` — SHA-256 of system+user prompt text used  
+- `model_version` — model identifier  
+- `llm_signal` — includes `p_success`, `p_confidence`, `horizon_days`, `expected_delta`, `suggested_instrument`  
+- `evidence[]` — array of `{source_id,type,filecite,excerpt}` (≤200 chars)  
+- `chart_spec` — optional plotting instruction (x,y,annotations)  
+- `flags` — e.g., `requires_human_review`
+
+## Evidence rules
+- If `p_confidence >= 0.7` the LLM **must** provide at least two distinct evidence items.  
+- Evidence items must reference canonical evidence in `data/` or external sources with a `filecite` (document + line range).  
+- The LLM must **not** output raw documents — only short excerpts and citations.
+
+## System prompt (example)
+Store the system prompt in `prompts/research_prompt.json`. Key excerpts:
+- "You are HEDGE ENGINE RESEARCH AGENT. Output only JSON matching `prompts/signal_template.json`."  
+- "For `p_confidence >= 0.7` include ≥2 evidence items with `filecite`."  
+- "Do not output raw documents; provide excerpts ≤200 chars."
+
+## Deep research → writing flow
+1. **Research call (latent)**: LLM inspects materials and returns `evidence[]`, `llm_signal`, `chart_spec`, `manuscript_snippet`.  
+2. **Deterministic validation**: Engine validates `evidence[]` entries exist in canonical store and fetches numeric arrays for charts.  
+3. **Quant checks**: Engine runs `decay_sim` and `ev_calc` to compute `quant_checks`.  
+4. **Manuscript assembly**: Deterministic template merges sanitized LLM prose + chart PNG + evidence citations to produce final manuscript output.
+
+## Few-shot & prompts lifecycle
+- Keep prompt history under `prompts/` with versioned filenames. Compute `prompt_hash` on every change and include it in Decision Records.  
+- Prompt changes must follow the governance process: new file, shadow-run, and compliance sign-off.
+
+## Example signal (truncated)
+```json
+{
+  "decision_id":"uuid-123",
+  "timestamp_utc":"2025-12-16T12:00:00Z",
+  "prompt_hash":"abcd1234...",
+  "model_version":"demo-model-v1",
+  "llm_signal":{
+    "p_success":0.78,"p_confidence":0.82,"horizon_days":5,
+    "expected_delta":{"fav":0.12,"neutral":0.00,"unfav":-0.05},
+    "suggested_instrument":{"type":"LETF","ticker":"SSO","leverage":2}
+  },
+  "evidence":[
+    {"source_id":"PTR.202401","type":"PTR","filecite":"PTR.51|L1-L3","excerpt":"Swarm of MoCs buying SMH..."},
+    {"source_id":"CRS.R123","type":"CRS","filecite":"CRS.R123|L12-L20","excerpt":"Policy passage increases chip demand..."}
+  ],
+  "chart_spec":{"type":"line","x":"date","y":"smh_nav","annotation":"policy_date"}
+}
+
+
+```markdown
+# manual/source/05-decision-engine.md
+
+# Decision Engine — EV Gate, LETF Decay & Pre-trade Checks
+
+## Responsibility
+Deterministic processing: compute LETF decay, EV, viability gates, pre-trade liquidity & instrument validation, and produce the execution plan and quant_checks.
+
+## Inputs
+- `llm_signal` from the Signal Layer  
+- `decay_sim` stats computed from underlying returns  
+- `market_snapshot` (prices, ADV, spreads)  
+- `config` (safety_margin, max_slippage_bps, trade limits)
+
+## LETF decay
+- Use `src/decay_sim.simulate_lef_decay()` (bootstrap) with fixed `seed` and `trials`.  
+- Store `decay_stats` (mean, median, worst, p10/p90) in Decision Record.
+
+## EV Calculation
+Algorithm:
+
+ev_gross = p_success * fav + (1 - p_success) * unfav
+letf_decay = max(0, -decay_stats.mean)
+ev_net = ev_gross - letf_decay - trading_costs - slippage
+viability_pass = (ev_net > safety_margin) && (p_confidence >= 0.7)
+
+- `safety_margin` default = 1% (configurable).  
+- `trading_costs` include exchange fees; `slippage` estimated from execution model.
+
+## T_max heuristic
+- `T_max = compute_t_max(leverage, est_vol_annual)`  
+- If `horizon_days > T_max` set `flags.requires_human_review = true`.
+
+## Pre-trade checks
+- Instrument allowed list lookup.  
+- Liquidity: `adv_usd >= adv_threshold` and `spread_bps <= max_spread_bps`.  
+- Notional limits: `notional <= max_notional_per_trade`.  
+- Position and portfolio concentration guards.
+
+## Quant checks schema (stored in Decision Record)
+```json
+{
+  "ev_gross": 0.08,
+  "letf_decay": 0.002,
+  "ev_net": 0.05,
+  "viability_pass": true,
+  "p_confidence": 0.82,
+  "safety_margin": 0.01
+}
+Execution plan generation
+
+If viable and pre-trade checks pass, build execution_plan with orders, sor_policy, and max_slippage_bps.
+
+Use volatility-targeting (risk_engine.compute_scale_factor) to size positions.
+
+Human review gating
+
+If flags.requires_human_review == true or p_confidence < 0.7 route to human review queue.
+
+Human approvals recorded in Decision Record under human_review.
+
+Determinism & replay
+
+Record seeds, decay_sim parameters, and config values in the Decision Record. This allows src/audit.replay_decision() to re-run deterministic calculations for auditors.
+
+
+
+```markdown
+# manual/source/06-execution.md
+
+# Execution — Sandbox, SOR, TWAP & Broker Adapters
+
+## Overview
+Two execution modes:
+- **Sandbox**: `src/execution_stub.py` (deterministic simulation). Used in local dev, integration tests, and shadow operations.  
+- **Live**: broker adapters (IB, Alpaca) — production connectors must be gated, audited, and require two-person approval for any config changes.
+
+## Execution Plan structure
+Example:
+```json
+{
+  "orders":[
+    {"ticker":"SSO","side":"BUY","qty":1000,"type":"ALG","algo":"TWAP","duration_minutes":30,"slices":6}
+  ],
+  "sor_policy":"percent_of_adv=0.05",
+  "max_slippage_bps":5
+}
+SOR (Smart Order Routing) policy
+
+Default percent_of_adv = 0.05 (5% of minute ADV).
+
+Participation caps and TWAP split sizes computed from adv_usd and price.
+
+Abort or scale down if estimated slippage exceeds max_slippage_bps.
+
+TWAP guidelines
+
+Default slices: 6 over 30 minutes for medium sized orders.
+
+For large blocks, extend duration or use dynamic participation with market conditions gating.
+
+Sandbox behavior
+
+Deterministic fills via seeded RNG.
+
+Partial fills modeled when capacity < requested.
+
+Return fills list with per-slice details and metrics (total_requested, total_filled, notional_filled_usd).
+
+Live broker adapters
+
+Implement adapter wrappers under src/brokers/ with two modes: dry-run and live.
+
+All live adapter calls must:
+
+Use vault-stored credentials (not in repo).
+
+Enforce idempotency and request tracking.
+
+Respect broker rate limits and error codes.
+
+Failures & retries
+
+Implement circuit-breaker for broker errors.
+
+Do not retry blindly; on repeated failures route to human ops queue and consider kill-switch activation if systemic.
+
+Auditability
+
+Write execution plan and execution result to Decision Record.
+
+Include broker order IDs (masked in public reports) and fill-level metrics.
+
+Safety rules
+
+Prefer limit orders; market orders only for small notional or emergency unwinds.
+
+Respect participation caps and abort on projected market impact breaches.
+
+
+
+```markdown
+# manual/source/07-risk-and-controls.md
+
+# Risk Engine & Controls
+
+## Objectives
+- Limit downside risk, control leverage, and ensure all trades respect pre-defined risk budgets via deterministic controls.
+
+## Components
+- **Vol-targeting**: `compute_scale_factor(target_vol, returns)`  
+- **VaR**: parametric (variance-covariance) & historical VaR modules  
+- **Stops & drawdown triggers**: emergency drawdown and stop-loss enforcement
+
+## Vol-targeting
+- Compute recent realized vol (annualized) and scale notional to hit `target_annual_vol`.  
+- Clamp scale between `min_scale` and `max_scale`. Example:
+  ```python
+  scale, recent_vol = compute_scale_factor(target_annual_vol=0.10, returns=recent_returns)
+  scaled_notional = base_notional * scale
+
+VaR & limits
+
+Compute 1-day 99% parametric VaR as baseline:
+
+var = -(mu + z_{0.99} * sigma)
+
+Store portfolio-level VaR and ensure trade does not push VaR beyond portfolio_var_limit.
+
+Stops, emergency drawdown & telemetry
+
+Emergency drawdown trigger default: 10% P2T. On breach:
+
+Reduce exposure to min_exposure_floor (default 0.3).
+
+Notify operators and consider kill-switch activation if systemic.
+
+Stop-loss rules: define at entry time; store stop price in Decision Record.
+
+Telemetry & alerts
+
+Track and publish:
+
+hallucination_rate (LLM evidence completeness metric)
+
+viability_pass_rate
+
+realized_vol, VaR_1d_99%, net_exposure, drawdown
+Alert thresholds configurable in config/telemetry.yml.
+
+Controls & governance
+
+Risk parameter changes (e.g., target_annual_vol, portfolio_var_limit) require PR + compliance sign-off.
+
+Any model or prompt change that materially affects risk must be shadow-run and approved before live enabling.
+
+Example sizing logic (pseudocode)
+
+if ev_net > safety_margin and viability_pass:
+    base_notional = portfolio_nav * alloc_frac
+    scale, recent_vol = compute_scale_factor(target_vol, recent_returns)
+    notional = base_notional * scale
+    if would_exceed_var(notional): reject or reduce
+
+
+
+```markdown
+# manual/source/08-audit-and-compliance.md
+
+# Audit, Decision Records & Compliance
+
+## Decision Record (recap)
+- Canonical JSON containing `prompt_hash`, `model_version`, `llm_output`, `quant_checks`, `execution_plan`, `execution_result`, `evidence[]`, `audit_hash`, `signature`.  
+- Stored append-only under `data/decision_records/`.
+
+## Audit hash & signatures
+- `audit_hash` = SHA-256 of canonical JSON serialized with sorted keys and without `audit_hash` and `signature`.  
+- `signature` = lightweight signed object for operator sign-off; for production use cryptographic signing (private key) or enterprise HSM.
+
+## Replay & verification
+- `src/audit.replay_decision(path, deterministic_validator)` must:
+  - Verify `audit_hash` matches recomputed hash.  
+  - Recompute deterministic values (EV, decay sim with same seed) and compare within tolerance.  
+  - Report mismatches and store replay results.
+
+## Retention & access
+- Store Decision Records and kill-switch logs in an immutable store (S3 with object immutability or institutional compliant archive).  
+- Retention: follow regulatory requirements (e.g., 7 years). Document retention policy in Addendum.
+
+## Compliance checklist before live
+- Legal counsel approval: documented.  
+- Compliance policy signed: documented.  
+- KYC/AML procedures verified.  
+- Insurance & custody in place.  
+- Two custodians assigned for kill-switch.
+
+## Release & provenance
+- On release, publish `prompt_hash` and `model_version` in release notes and attach `dataset_manifest.json` and artifacts with SHA-256.  
+- CI builds and signs release artifacts; store artifacts in a reproducible manner.
+
+## Inspector/auditor guidance
+- Use `scripts/validate_addendum.py` to verify repo manifest.  
+- Use `src/audit.replay_decision()` to reproduce Decision Records.  
+- Verify `dataset_manifest.json` SHAs and sample a few Decision Records to confirm reproducibility.
+
+## Example replay command
+```bash
+python -c "from src.audit import replay_decision; print(replay_decision('data/decision_records/decision_demo.json'))"
+
+
+
+```markdown
+# manual/source/09-operator-playbook.md
+
+# Operator Playbook — Sandbox → Shadow → Small Live → Scale
+
+## Roles
+- **Operator**: day-to-day runbook executor (kill-switch, approvals).  
+- **Engineer**: code and infra support.  
+- **Compliance**: signoff authority for prompts/models and live operations.  
+- **Security**: incident response lead.
+
+## Sandbox (developer)
+1. Create venv, install deps.  
+2. Generate sandbox datasets: `python data/generate_sandbox_data.py`.  
+3. Run full sandbox flow: `python scripts/run_sandbox.py full`.  
+4. Inspect Decision Records under `data/decision_records/`.
+
+Acceptance: demo Decision Record created and `execution_result` exists.
+
+## Shadow (paper)
+1. Connect live market feeds in read-only mode.  
+2. Route Execution Agent to **shadow** (no live orders).  
+3. Run for at least 30 days. Track: calibration of `p_success` vs realized outcomes, hallucination rate, `viability_pass` rate.  
+4. Produce a shadow-run report and attach to PR when modifying prompts/models.
+
+Acceptance: `p_success` calibration within acceptable band; hallucination below threshold.
+
+## Small live (canary)
+1. Limit notional per trade (e.g., $50k) and gross leverage caps.  
+2. Require human approval for LETF horizon > 7 days.  
+3. Monitor telemetry with alerts; maintain two-person custody for kill-switch reactivation.
+
+Acceptance: stability for 90 days, audit signoff.
+
+## Scale
+- Increase AUM and notional gradually with repeatable metrics and signoffs.  
+- Add institutional execution plumbing and automated monitoring.
+
+## Human approval flow
+- Use PR template for prompt changes and include `prompt_hash`.  
+- For live execution approvals use audit-signed entries in `data/kill_switch_logs/` with two custodians for reactivation.
+
+## Emergency steps (quick)
+1. Activate kill-switch (operator console preferred).  
+2. Verify `execution_mode == "shadow"` and `live_order_count == 0`.  
+3. Snapshot Decision Records and telemetry.  
+4. Notify Compliance and Security.  
+5. Follow incident playbook in `SECURITY.md`.
+
+## Checklist for daily ops
+- Morning: run `notebooks/02_sandbox_run.ipynb` in shadow for 30 minutes; ensure `viability_pass` rates normal.  
+- Monitor human review queue; approve within 30 minutes.  
+- End-of-day: audit replay for Decision Records created that day.
+
+## Useful commands
+```bash
+# run demo decision & sandbox execution
+python scripts/run_sandbox.py demo
+
+# run backtest
+python scripts/run_backtest.py --start 2023-01-01 --end 2023-12-31
+
+# validate addendum
+python scripts/validate_addendum.py --fix --update
+
+
+
+```markdown
+# manual/source/10-appendix.md
+
+# Appendix: Schemas, Prompts & Examples
+
+## Decision Record schema (`schemas/decision_record.json`)
+```json
+{
+  "type":"object",
+  "properties":{
+    "decision_id":{"type":"string"},
+    "timestamp_utc":{"type":"string"},
+    "model_version":{"type":"string"},
+    "prompt_hash":{"type":"string"},
+    "llm_output":{"type":"object"},
+    "quant_checks":{"type":"object"},
+    "execution_plan":{"type":"object"},
+    "execution_result":{"type":"object"},
+    "evidence":{"type":"array"},
+    "audit_hash":{"type":"string"},
+    "signature":{"type":"object"}
+  },
+  "required":["decision_id","timestamp_utc","prompt_hash","model_version","llm_output","quant_checks","audit_hash"]
+}
+
+
+
+Prompt examples
+
+prompts/research_prompt.json must contain:
+
+System message: strict JSON-only instruction & evidence rules.
+
+User template: supply market_snapshot, macro_indicators, ptr_summary.
+
+Sample Decision Record (truncated)
+
+{
+  "decision_id":"uuid-0001",
+  "timestamp_utc":"2025-12-16T12:00:00Z",
+  "model_version":"demo-model-v1",
+  "prompt_hash":"abcd1234...",
+  "llm_output":{ /* as in chapter 4 */ },
+  "quant_checks":{
+    "ev_gross":0.08,
+    "letf_decay":0.002,
+    "ev_net":0.05,
+    "viability_pass":true
+  },
+  "execution_plan":{ /* orders */ },
+  "execution_result":{ /* fills */ },
+  "audit_hash":"sha256..."
+}
+
+
+File locations
+
+Decision Records: data/decision_records/
+
+Kill-switch logs: data/kill_switch_logs/
+
+Telemetry: data/telemetry/
+
+Prompts: prompts/
+
+Schemas: schemas/
+
+Scripts: scripts/
+
+Reproducible commands
+
+Compute prompt hash:
+
+sha256sum prompts/research_prompt.json | awk '{print $1}'
+
+python scripts/validate_addendum.py --fix --update
+
+python scripts/run_sandbox.py full
+
+Glossary
+
+Decision Record: auditable JSON record for each decision.
+
+LLM Research Agent: the prompt-driven model that proposes signals.
+
+EV Gate: deterministic expected value calculation and viability gate.
+
+LETF decay: path-dependent drag from daily reset LETFs.
+
+Kill-switch: operator control to stop live executions and enter shadow mode.
+
+Contacts & escalation
+
+Engineering: eng@example.com
+
+Compliance: compliance@example.com
+
+Security: security@example.com
