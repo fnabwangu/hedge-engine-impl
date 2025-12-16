@@ -1,0 +1,100 @@
+Yes — you can. Below is a **ready-to-use draft license** that:
+
+* **reserves copyright** to you,
+* **permits** non-commercial, personal research and study, and
+* **expressly forbids** commercial use, redistribution/synchronization, and using the work to train/seed LLMs or any model for anything other than personal, non-commercial study.
+
+This is a **custom, restrictive** license intended for the goals you described. It is **not** a standard open license (e.g., MIT/Apache/CC) — it’s an explicit rights reservation with narrow permissions. If you plan to enforce it or use it for a commercial product, you should **have it reviewed by counsel**. I’ll include a short “how to apply” section after the license.
+
+---
+
+## Hedge Engine Personal Use License (HE-PUL) 1.0
+
+**Copyright (c) 2025 [Your Name]. All rights reserved.**
+
+**Definitions.**
+
+* **“Work”** means the copyrighted material provided under this license (including but not limited to technical manuals, prompts, code, data, PDFs, and other materials).
+* **“You”** means the individual or entity obtaining the rights under this license.
+* **“Personal Use”** means reading, studying, experimenting, or otherwise using the Work for purely private, non-commercial, non-public research and education. Personal Use does **not** include any activity that is commercial, public-facing, made available to third parties, or used to provide a service or product.
+* **“Synchronize”** means to copy, mirror, host, index, or replicate the Work (or a substantial part of it) across one or more systems, storage services, or platforms so that it is made available by synchronization, automated distribution, or public access.
+* **“LLM”** means a large language model or any machine learning model that trains on text, documents, code, or other artifacts derived from the Work.
+
+**Grant of Rights.**
+Subject to the terms below, the copyright holder grants You a **non-exclusive, non-transferable, royalty-free** license to use the Work **only** for Personal Use.
+
+**Restrictions (you may not):**
+
+1. **Commercial Use.** Use, reproduce, distribute, sublicense, or otherwise exploit the Work for commercial purposes, including but not limited to selling, offering, or providing services, paid access, subscription products, or using the Work as a component of a product or service that is sold, licensed, or otherwise used for direct or indirect commercial advantage.
+2. **Synchronization & Public Distribution.** Synchronize, mirror, host, publish, or otherwise make available the Work or any substantial portion of it on a public or shared platform, public cloud storage, CDN, or any service that replicates or synchronizes the Work to multiple users or locations, except as expressly permitted under “Permitted Uses” below.
+3. **AI Training / Model Use.** Use the Work to train, fine-tune, augment, or otherwise improve any machine learning, deep learning, or LLM system for any purpose other than strictly Personal Use. In particular, You must not:
+
+   * Upload, submit, or otherwise provide the Work (in whole or in part) to an online service or platform for the purpose of training, fine-tuning, indexing, or otherwise ingesting into an LLM or other model intended for public or commercial use; or
+   * Convert the Work into a dataset or corpus for model training, or host such derived dataset in a way that enables third-party model training or commercial distribution.
+4. **Sublicensing.** Sublicense, assign, or transfer rights granted by this license to any third party.
+5. **Removal or Alteration of Notices.** Remove, obfuscate, or alter any copyright, attribution, or license notice embedded in the Work.
+
+**Permitted Uses (narrow exceptions).**
+The following uses are permitted provided they remain strictly non-commercial and non-public:
+
+* **Personal Research / Education.** You may read, copy, cite, and analyze the Work for your own private study, research, experimentation, or educational purposes.
+* **Private Non-Commercial Derivatives (limited).** You may create derivative works for private, non-commercial experimentation or study **provided** you do not distribute, synchronize, or otherwise make the derivative work publicly available.
+* **Short Excerpts for Review/Critique.** You may quote or excerpt small portions of the Work for review, critique, academic citation, or private discussion, subject to the normal rules of copyright and fair use and provided that any excerpt is accompanied by a clear attribution to the copyright holder. Excerpts used publicly must not reproduce a substantial portion of the Work.
+* **Internal Evaluation (non-commercial organizations).** A non-commercial research organization or individual may use the Work internally for evaluation or teaching, provided the Work is **not** made public, not used for commercial research, and is not used to train models that are shared outside the organization or used commercially.
+
+**Limited Exception for Personal LLM Use.**
+You may use the Work as input to an LLM **only if** all the following conditions are met:
+
+1. The use is strictly Personal Use (private, non-commercial, and not shared with others).
+2. You **do not** use the Work to fine-tune, train, or otherwise update a model that will or may be used by others or used for commercial purposes.
+3. You **do not** supply the Work to an online LLM service that stores, indexes, or reuses submitted data for model training or augmentation for public/commercial models. If you use an external service, confirm in writing that the service does not retain or reuse data for model training.
+
+**Attribution.**
+All permitted uses must include a clear attribution: “Hedge Engine — Implementation Manual (c) 2025 [Your Name]. All rights reserved.” Do not imply endorsement by the copyright holder.
+
+**No Sublicense / No Transfer.**
+This license is personal to You and cannot be sublicensed, assigned, or transferred. Any attempt to sublicense or assign is void.
+
+**Termination.**
+This license is automatically terminated if You breach any restriction here. On termination You must: (a) cease all use of the Work; (b) delete or destroy all copies of the Work and any derivatives in your possession or control; and (c) notify the copyright holder in writing that you have complied.
+
+**Enforcement / Remedies.**
+The copyright holder may seek injunctive relief, damages, and any other remedies available under law for any breach of this license.
+
+**Disclaimer of Warranty.**
+THE WORK IS PROVIDED “AS-IS,” WITHOUT WARRANTY OF ANY KIND. THE COPYRIGHT HOLDER DISCLAIMS ALL IMPLIED WARRANTIES, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+**Limitation of Liability.**
+IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE USE OR INABILITY TO USE THE WORK.
+
+**Governing Law.**
+This license is governed by the laws of [Your Jurisdiction — e.g., State of Michigan, USA]. Venue for disputes shall be the courts located in [Your County/City].
+
+**Contact.**
+For permissions, licensed commercial use, or other inquiries contact: [email address].
+
+---
+
+### Important notes & disclaimers
+
+* **This is a custom license** drafted for your stated goals. It is **not** a substitute for legal advice. If you intend to rely on this license for enforcement (especially to police model training or commercial misuse), **have it reviewed by an attorney** experienced in IP and software/data licensing.
+* The phrase **“synchronize”** is intentionally broad to prevent systems that replicate or distribute the Work (cloud sync, indexing, CDNs). If you mean something narrower, tell me and I can tighten the definition.
+* The **LLM prohibition** is explicit: the license prevents using the Work to train/augment models for public/commercial use and prevents submitting it to services that reuse user data for training. That’s enforceable only to the extent you can detect misuse; include watermarks or metadata in the Work to help auditing if you need enforcement.
+* You may want to offer **a commercial / research license** for those who want to use the Work to train models or for commercial use — create a separate paid license/agreement for that purpose.
+
+---
+
+## How to apply this license to your repo
+
+1. Create a file named `LICENSE` (no extension) at the repository root and paste the text above. Replace the `[Your Name]`, `[Your Jurisdiction]`, and contact email.
+2. Commit & push:
+
+```bash
+git add LICENSE
+git commit -m "Add Hedge Engine Personal Use License (HE-PUL) v1.0"
+git push
+```
+
+3. In your README add a short note:
+   `License: Hedge Engine Personal Use License (HE-PUL) v1.0 — see LICENSE for full terms.`
+
